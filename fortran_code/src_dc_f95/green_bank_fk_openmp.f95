@@ -11,7 +11,7 @@ program green_bank_fk_openmp
    use retrieve_gf, only : block_gg, dt, lnpt, dist_max, dist_min, d_step, dep_max, dep_min, dep_step, get_gf_data, t_cor
    use vel_model_data, only : read_vel_model, update_model, src, rcv 
    use wave_travel, only : trav_fk
-   use bessel2, only : load_bessel
+   use bessel2, only : load_bessel, deallocate_bessel
    use fk_openmp, only : sub_bs_dc
    implicit none
    real dist(ndis)
@@ -60,7 +60,7 @@ program green_bank_fk_openmp
    nx=int((dist_max-dist_min)/d_step)+1
    nz=int((dep_max-dep_min)/dep_step)+1
 
-   write(*,*)'total =',nx,nz
+!   write(*,*)'total =',nx,nz
 !	open(100,file='stored_bessel')
 !	open(101,file='computed_bessel')
    if(nx.gt.ndis) then
@@ -69,6 +69,7 @@ program green_bank_fk_openmp
    endif
    open(11,file=gf_bank,status='unknown',access='direct',recl=block_gg)
 
+   write(0, *)'Get velocity model...'
    call read_vel_model(vel_model)
 
    do k=1,nx
@@ -78,14 +79,14 @@ program green_bank_fk_openmp
    ll=0
    do iz=1,nz
       depth=dep_min + (iz-1)*dep_step
-      write(*,*) depth
+!      write(*,*) depth
       call update_model(depth,0.0)
       call trav_fk(dist,tmin,nx)
-      write(*,*)'t0: ', (tmin(k),k=1,20)
+!      write(*,*)'t0: ', (tmin(k),k=1,20)
       do k=1,nx
          t0(k)=tmin(k)-t_cor
       enddo
-      write(0,*)src, rcv
+!      write(0,*)src, rcv
       call sub_bs_dc(nx,dist,t0,green,disp)
       ll = nx * (iz - 1)
       do k=1,nx
@@ -95,6 +96,7 @@ program green_bank_fk_openmp
       enddo
    enddo
    close(11)
+   call deallocate_bessel
 
  
 end program green_bank_fk_openmp
