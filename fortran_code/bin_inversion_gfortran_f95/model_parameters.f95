@@ -1,26 +1,28 @@
 module model_parameters
 
 
-   use constants, only : max_seg, nnpx, nnpy, nnxs, nnys, nnxy, nt1
+   use constants, only : max_seg, max_stk_psources, max_dip_psources, max_stk_subfaults, &
+               &     max_dip_subfaults, max_subf, max_subfaults2
    use modelling_inputs, only : t_latest
    implicit none
-   real :: slip0(nnxy, max_seg), rake0(nnxy, max_seg), rupt_time0(nnxy, max_seg)
-   real :: tl0(nnxy, max_seg), tr0(nnxy, max_seg)
+   real :: slip0(max_subf, max_seg), rake0(max_subf, max_seg), rupt_time0(max_subf, max_seg)
+   real :: tl0(max_subf, max_seg), tr0(max_subf, max_seg)
    integer :: n_seg, nxs_sub(max_seg), nys_sub(max_seg), nx_p, ny_p, nxs0, nys0
    real :: dip_seg(max_seg), stk_seg(max_seg), delay_seg(max_seg)
-   real :: point_sources(7, nnpx, nnpy, nnxs, nnys, max_seg)
-   real :: cniu(nnxy, max_seg)
+   real :: cniu(max_subf, max_seg)
    real :: c_depth, dxs, dys, v_ref, v_min, v_max, tbl, tbr
    real :: ta0, dta
-   real :: time_min(nnxy, max_seg), time_max(nnxy, max_seg), rake_min
+   real :: time_min(max_subf, max_seg), time_max(max_subf, max_seg), rake_min
+   real :: time_ref(max_subf, max_seg)
    integer :: msou, jfmax
-   real :: beg(nt1), dp(nt1)
-   integer :: np(nt1)
+   real :: beg(max_subfaults2), dp(max_subfaults2)
+   integer :: np(max_subfaults2)
+   real, allocatable :: point_sources(:, :, :, :, :, :)
 !
 ! for regularization
 !
-   integer :: nleft(3, nnys, nnxs, max_seg), nright(3, nnys, nnxs, max_seg), & 
-   & nup(3, nnys, nnxs, max_seg), ndown(3, nnys, nnxs, max_seg)
+   integer, allocatable :: nleft(:, :, :, :), nright(:, :, :, :), &
+   & nup(:, :, :, :), ndown(:, :, :, :)
 
 
 contains
@@ -31,17 +33,22 @@ contains
    integer n_s, i_s, io_x, io_y, ixs, iys, io_v_d, nxy, k, nxys(max_seg), &
    &  i_seg, ix, iy, ll, io_seg, kxy, kpxy, nx_c, ny_c
    real dist, t_ref, t_max, t_min, delta, dip_s, stk_s
+   allocate(point_sources(7, max_stk_psources, max_dip_psources, &
+          &  max_stk_subfaults, max_dip_subfaults, max_seg))
+   allocate(nleft(3, max_dip_subfaults, max_stk_subfaults, max_seg))
+   allocate(nright(3, max_dip_subfaults, max_stk_subfaults, max_seg))
+   allocate(nup(3, max_dip_subfaults, max_stk_subfaults, max_seg))
+   allocate(ndown(3, max_dip_subfaults, max_stk_subfaults, max_seg))
 !
 !     Input Fault position to memory
 !
+   write(*,*)'Read and store fault segments data to memory...'
    open(12, file='Fault.time', status='old')
    read(12,*) nxs0, nys0, c_depth
    read(12,*) n_seg, dxs, dys, nx_p, ny_p, v_min, v_max, tbl, tbr
    read(12,*) ta0, dta, msou, v_ref, io_v_d
    do i_seg = 1, n_seg
-      write(*,*) i_seg, stk_seg(1), stk_seg(2)
       read(12,*) io_seg, dip_seg(i_seg), stk_seg(i_seg)
-      write(*,*) i_seg, io_seg, stk_seg(1), stk_seg(2)
       read(12,*) nxs_sub(i_seg), nys_sub(i_seg), delay_seg(i_seg)
       nxy = nxs_sub(i_seg) * nys_sub(i_seg)
       do ll = 1, nxy
@@ -61,7 +68,7 @@ contains
       read(12,*) io_seg, dip_s, stk_s
       if ((abs(dip_s-dip_seg(i_seg)) .gt. 1.e-2).or. &
       &  (abs(stk_s-stk_seg(i_seg)) .gt. 1.e-2)) then
-         write(*,*)'the value in Fault.pos is not matched with that in Fault.das'
+         write(*,*)'Fault mechanism in Fault.pos is not matched with that in Fault.das'
          write(*,*) i_seg
          write(*,*) dip_s, dip_seg(i_seg)
          write(*,*) stk_s, stk_seg(i_seg)
@@ -95,15 +102,18 @@ contains
             dist = point_sources(4, nx_c, ny_c, ixs, iys, i_seg)
             t_ref = dist/v_ref
             t_max = dist/v_min
-            if (t_max .gt. t_latest) t_max = t_latest
             t_min = dist/v_max
+!            if (t_ref .gt. t_latest) t_ref = t_latest
+!            if (t_min .gt. t_latest) t_min = t_latest
+            if (t_max .gt. t_latest) t_max = t_latest
             delta = t_min-t_ref
             if (tbl .lt. delta) then
                time_min(kxy, i_seg) = delta
             else
                time_min(kxy, i_seg) = tbl
             end if
-            delta = t_max-t_ref
+!            time_ref(kxy, i_seg) = time_min(kxy, i_seg) + t_ref
+            delta = t_max - t_ref
             if (tbr .gt. delta) then
                time_max(kxy, i_seg) = delta
             else
@@ -127,12 +137,13 @@ contains
       read(12,*)(cniu(k, i_s), k = 1, nxys(i_s))
    end do 
    close(12)
+!   write(*,*)cniu(:nxys(1), 1)
    end subroutine get_faults_data
 
 
    subroutine write_model(dd, aa, tt, tl, tr)
-   real :: dd(nnxy, max_seg), aa(nnxy, max_seg), tt(nnxy, max_seg)
-   real :: tl(nnxy, max_seg), tr(nnxy, max_seg)
+   real :: dd(max_subf, max_seg), aa(max_subf, max_seg), tt(max_subf, max_seg)
+   real :: tl(max_subf, max_seg), tr(max_subf, max_seg)
    real :: latitude_ep, longitude_ep, t_ref, moment_sol
    integer :: i_seg, iys, ixs, iy, ix, i_g, kp
    latitude_ep = 0.0
@@ -190,6 +201,7 @@ contains
          do ixs = 1, nxs_sub(i_g)
             kp = kp + 1
             t_ref = point_sources(5, ix, iy, ixs, iys, i_g)
+            t_ref = min(t_ref, t_latest)
             moment_sol = dd(kp, i_g) * cniu(kp, i_g) * dxs * dys * (10.0 ** 10.0)
             write(13, 133) point_sources(1, ix, iy, ixs, iys, i_g), &
          &  point_sources(2, ix, iy, ixs, iys, i_g), point_sources(3, ix, iy, ixs, iys, i_g), &
@@ -209,7 +221,7 @@ contains
 !  boundary conditions? or what?
 !
    integer :: nx0, ny0
-   parameter(nx0 = nnxs*2, ny0 = nnys*2)
+   parameter(nx0 = max_stk_subfaults*2, ny0 = max_dip_subfaults*2)
    integer :: io_surf, nblock, npa, k, i_seg, io_right, io_left, io_up, io_down 
    real :: delt_x, delt_y, zmed_max, zmed_min, zleft_max, zleft_min
    real :: zright_max, zright_min, zup_max, zup_min, zdown_max, zdown_min
@@ -217,7 +229,7 @@ contains
    real :: ddx1, ddx2, ddy1, ddy2
    integer :: io_seg, nmed, nleft2, nright2, nup2, ndown2, nangle, npv, nb, nsour
    integer :: nx, ny, i, j, k_s, i_ss, i_x, i_y
-   real :: surface(1000, 4), xyb(nx0, ny0, 3), xr(5), u0(nt1, 4)
+   real :: surface(1000, 4), xyb(nx0, ny0, 3), xr(5), u0(max_subfaults2, 4)
    open(17, file='bound.in', status='old')
    read(17,*) io_surf
    if (io_surf .eq. 1) then
@@ -413,7 +425,7 @@ contains
    subroutine get_special_boundaries()
    implicit none
    integer :: nm, nn, iss, ixs, iys, ll, i_g, kxy
-   real :: dd(nnxy, max_seg), aa(nnxy, max_seg)
+   real :: dd(max_subf, max_seg), aa(max_subf, max_seg)
 !
 !  special boundary
 !
@@ -508,7 +520,7 @@ contains
    do k = 1, nn_use
       read(22,'(a)')aaaa
 ! 1  format(a)
-      write(*,'(a)')aaaa
+!      write(*,'(a)')aaaa
       read(22,*) i_s, ix, iy
       read(22,*) io_change, n_is, nxx, nyy
       if (io_change .eq. 1) then
@@ -537,6 +549,13 @@ contains
    end do
    close(22)
    end subroutine subfault_positions
+
+
+   subroutine deallocate_ps()
+   implicit none
+   deallocate(point_sources)
+   deallocate(nleft, nright, ndown, nup)
+   end subroutine deallocate_ps
 
 
 end module model_parameters
