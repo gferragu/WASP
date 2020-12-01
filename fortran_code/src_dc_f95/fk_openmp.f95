@@ -53,6 +53,8 @@
 !				for single force.
 !				Correct a bug in free bottom boundary condi.
 !				Use thickness<epsilon to indicate halfspace.
+
+!                   pk          Added small modifications.
 !**********************************************************************
 !      program fk
 module fk_openmp
@@ -61,6 +63,7 @@ module fk_openmp
    use constants, only : nlay, twopi, pi, ndis, nt
    use vel_model_data, only : depths, xi, mu, new_vel_p, new_vel_s, rcv, src, new_dens, qqp, qqs, flip_model, &
                         &     extra, extra2, n_layers_new
+   use layer, only : ka, kb
    use fk_source, only : source
    use fk_kernel, only : kernel
    use retrieve_gf, only : lnpt, dt, d_step
@@ -74,10 +77,11 @@ contains
 
    subroutine sub_bs_dc(nx,x,t0,green,disp)
 !
+   use omp_lib
    IMPLICIT NONE
-   include 'omp_lib.h'
    integer stype,updn
-   complex*16 :: ka(nlay),kb(nlay),att,w,w2
+!   complex*16 :: ka(nlay),kb(nlay),att,w,w2
+   complex*16 :: att,w,w2
    logical dynamic, disp
 !
    real :: green(nt, 8, ndis)
@@ -97,7 +101,7 @@ contains
    complex data1(nt), kahan_y(9,ndis), kahan_t(9,ndis), kahan_c(9,ndis)
    allocate(summ(9,ndis,nt))
 
-   call omp_set_num_threads(48)
+   write(0,*)'Compute near field GF at fixed depth...'
    dynamic = .TRUE.
    nCom = 9
 !       sequence 1   2   3  4    5   6   7   8
@@ -219,7 +223,7 @@ contains
    z = pmax*nfft2*dw/kc
    k = sqrt(z*z+1)
    total = nfft2*(kc/dk)*0.5*(k+log(k+z)/z)
-   write(0,'(a3,f9.5,a8,f9.2,a8,i9)')'dk',dk,'kmax',kc,'N',total
+!   write(0,'(a3,f9.5,a8,f9.2,a8,i9)')'dk',dk,'kmax',kc,'N',total
    tenPerc = 0.1*total
    count = 0.
    kc = kc*kc
@@ -227,13 +231,13 @@ contains
 !   summ(:, :, :) = cmplx(0.,0.)
    
 
-   write(0,*)' start F-K computation, iw-range:',wc1,wc2,wc,nfft2
+!   write(0,*)' start F-K computation, iw-range:',wc1,wc2,wc,nfft2
 !$omp parallel &
-!$omp& private (j, omega, w, att, ka, kb, k, n, u, i, ix, z, ixx, aj0, aj1, aj2, nf1, nf2), & 
+!$omp& private (j, omega, w, att, k, n, u, i, ix, z, ixx, aj0, aj1, aj2, nf1, nf2), & 
 !$omp& private (filter, phi, l, kahan_y, kahan_t, kahan_c) &
 !$omp& shared (wc1, nfft2, sigma, n_layers_new, pmin, dk, kc, pmax, src, rcv, mu, nx, x) &
 !$omp& shared (aj0s, aj1s, aj2s, summ, flip, count, tenPerc, const, wc, wc2, taper, dynamic, t0, nCom)
-!$omp do schedule(dynamic)
+!$omp do schedule(guided)
    do j=wc1, nfft2                                                  ! start frequency loop
       summ(:, :, j) = cmplx(0.0, 0.0)
       omega = (j-1)*dw
@@ -254,8 +258,9 @@ contains
 !
       k = omega*pmin + 0.5d0*dk
       n = (sqrt(kc+(pmax*omega)**2)-k)/dk                           ! kmax
+!      write(*,*)'j: ', j, 'id: ', omp_get_thread_num(), 'n: ', n
       do i=1,n                                                      ! start k-loop
-         call kernel(k, u, ka, kb)
+         call kernel(k, u)!, ka, kb)
          do ix=1,nx
             z = k*x(ix)
             ixx = int(x(ix)/d_step + 0.001) + 1
@@ -330,7 +335,7 @@ contains
    nfft = smth*nfft
    nfft3 = nfft/2
    dfac = exp(sigma*dt)
-   write(0,*)'Debugging', sigma, dfac, dt
+!   write(0,*)'Debugging', sigma, dfac, dt
    do ix=1,nx
       if ( nfft2.EQ.1 ) then
 !          write(20,'(f5.1,9e11.3)')x(ix),(real(summ(ix,l,1)),l=1,nCom)
